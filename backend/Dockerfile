@@ -19,7 +19,6 @@ COPY backend/tsconfig.json backend/tsconfig.json
 COPY backend/prisma backend/prisma
 COPY backend/src backend/src
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/backend/node_modules ./backend/node_modules
 
 RUN npx prisma generate --schema backend/prisma/schema.prisma
 RUN npm run build --workspace backend
@@ -43,3 +42,14 @@ WORKDIR /app/backend
 EXPOSE 3333
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:3333/api/v1/health').then((res)=>{if(!res.ok) process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["node", "dist/index.js"]
+
+FROM node:24-bookworm-slim AS migrator
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY backend/package.json backend/package.json
+COPY backend/prisma backend/prisma
+RUN npm ci --workspace backend --include-workspace-root=false
+
+WORKDIR /app/backend
+CMD ["npx", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]

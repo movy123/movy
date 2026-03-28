@@ -21,7 +21,6 @@ COPY frontend/next.config.ts frontend/next.config.ts
 COPY frontend/next-env.d.ts frontend/next-env.d.ts
 COPY frontend/app frontend/app
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 
 WORKDIR /app/frontend
 RUN npm run build
