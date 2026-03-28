@@ -34,9 +34,10 @@ COPY frontend/package.json frontend/package.json
 COPY mobile/package.json mobile/package.json
 RUN npm ci --omit=dev --workspace backend --include-workspace-root=false
 
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/backend/dist ./backend/dist
 COPY --from=build /app/backend/prisma ./backend/prisma
-RUN npx prisma generate --schema backend/prisma/schema.prisma
 
 WORKDIR /app/backend
 EXPOSE 3333
@@ -48,6 +49,8 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/package.json
+COPY frontend/package.json frontend/package.json
+COPY mobile/package.json mobile/package.json
 COPY backend/prisma backend/prisma
 RUN npm ci --workspace backend --include-workspace-root=false
 
