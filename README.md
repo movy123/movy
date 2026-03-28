@@ -18,6 +18,12 @@ MOVY is a modular mobility platform with:
 4. In another terminal run `npm run dev:frontend`.
 5. Optionally run `npm run dev:mobile`.
 
+## GitHub testing
+
+- The repository is connected to GitHub Actions and the main CI workflow now boots the backend and frontend on the runner before executing smoke tests.
+- This gives the team a reproducible "it really started" signal for testing and iterative improvement on every push to `main`, `develop` and pull requests.
+- GitHub Actions is used here for validation, not as the final public hosting layer for the platform. Real shared environments should continue through staging and production deploy workflows.
+
 ## Local infra
 
 - Local Postgres/Redis: `docker compose -f infra/docker-compose.local.yml up -d`

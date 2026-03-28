@@ -17,6 +17,7 @@
     "test": "npm run test --workspace backend",
     "lint": "npm run lint --workspace backend && npm run lint --workspace frontend && npm run lint --workspace mobile",
     "audit": "npm audit --audit-level=high",
+    "audit:contracts": "node scripts/audit-contracts.mjs",
     "infra:local:up": "docker compose -f infra/docker-compose.local.yml up -d",
     "infra:local:up:app": "docker compose --profile app -f infra/docker-compose.local.yml up -d",
     "infra:local:down": "docker compose -f infra/docker-compose.local.yml down",
@@ -24,8 +25,9 @@
     "smoke:backend": "node scripts/smoke.mjs backend",
     "smoke:frontend": "node scripts/smoke.mjs frontend",
     "smoke": "node scripts/smoke.mjs all",
+    "smoke:ci": "node scripts/ci-stack.mjs",
     "smoke:staging": "node scripts/smoke-staging.mjs",
     "smoke:release": "node scripts/smoke-staging.mjs",
-    "verify": "npm run lint && npm test && npm run build"
+    "verify": "npm run lint && npm run audit:contracts && npm test && npm run build"
   }
 }

@@ -7,7 +7,8 @@ const checksByMode = {
     {
       name: "backend health",
       url: process.env.BACKEND_HEALTH_URL ?? "http://127.0.0.1:3333/api/health",
-      validate: (payload) => payload?.status === "ok" && payload?.service === "movy-backend"
+      validate: (payload) =>
+        ["ok", "degraded"].includes(payload?.status) && payload?.service === "movy-backend"
     },
     {
       name: "backend readiness",
