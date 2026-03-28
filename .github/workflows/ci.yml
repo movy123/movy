@@ -70,6 +70,7 @@ jobs:
         with:
           name: frontend-next
           path: frontend/.next
+          include-hidden-files: true
           if-no-files-found: error
 
   docker-build:
