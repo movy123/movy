@@ -8,6 +8,15 @@ function readSeedValue(key: string, fallback: string) {
   return value && value.length > 0 ? value : fallback;
 }
 
+function readSeedBoolean(key: string, fallback: boolean) {
+  const value = process.env[key]?.trim();
+  if (!value) {
+    return fallback;
+  }
+
+  return value === "true";
+}
+
 async function ensureWallet(userId: string, balance: number) {
   await prisma.wallet.upsert({
     where: { userId },
@@ -51,11 +60,12 @@ async function main() {
   const passengerPassword = readSeedValue("MOVY_DEMO_PASSENGER_PASSWORD", "123456");
   const driverEmail = readSeedValue("MOVY_DEMO_DRIVER_EMAIL", "carlos@movy.local");
   const driverPassword = readSeedValue("MOVY_DEMO_DRIVER_PASSWORD", "123456");
+  const adminMfaEnabled = readSeedBoolean("MOVY_DEMO_ADMIN_MFA_ENABLED", true);
 
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {
-      mfaEnabled: true
+      mfaEnabled: adminMfaEnabled
     },
     create: {
       name: "Equipe MOVY",
@@ -64,7 +74,7 @@ async function main() {
       role: UserRole.ADMIN,
       rating: 5,
       walletBalance: 0,
-      mfaEnabled: true,
+      mfaEnabled: adminMfaEnabled,
       wallet: {
         create: {
           balance: 0

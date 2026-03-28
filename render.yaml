@@ -42,6 +42,8 @@ services:
         value: admin@movy.local
       - key: MOVY_DEMO_ADMIN_PASSWORD
         sync: false
+      - key: MOVY_DEMO_ADMIN_MFA_ENABLED
+        value: "false"
       - key: MOVY_DEMO_PASSENGER_EMAIL
         value: ana@movy.local
       - key: MOVY_DEMO_PASSENGER_PASSWORD

@@ -35,6 +35,7 @@ This path is for public testing and iterative improvement, not the final product
 
 - `CORS_ALLOWED_ORIGINS`: use the Render frontend URL such as `https://movy-web.onrender.com`
 - `MOVY_DEMO_ADMIN_EMAIL`: defaults to `admin@movy.local`
+- `MOVY_DEMO_ADMIN_MFA_ENABLED`: defaults to `false` in the Render blueprint so the public demo dashboard can authenticate server-side
 - `MOVY_DEMO_PASSENGER_EMAIL`: defaults to `ana@movy.local`
 - `MOVY_DEMO_DRIVER_EMAIL`: defaults to `carlos@movy.local`
 

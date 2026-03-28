@@ -34,6 +34,14 @@ const defaultLocation = (address: string, lat: number, lng: number): Location =>
   lng
 });
 
+function readBoolean(value: string | undefined, fallback: boolean) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  return value === "true";
+}
+
 export class MovyStore {
   users = new Map<string, User>();
   drivers = new Map<string, DriverProfile>();
@@ -59,9 +67,10 @@ export class MovyStore {
   }
 
   private seed() {
+    const demoAdminMfaEnabled = readBoolean(process.env.MOVY_DEMO_ADMIN_MFA_ENABLED, true);
     const admin = this.createUser("Equipe MOVY", "admin@movy.local", hashPassword("admin123"), "ADMIN", {
-      mfaEnabled: true,
-      mfaMethod: "APP"
+      mfaEnabled: demoAdminMfaEnabled,
+      mfaMethod: demoAdminMfaEnabled ? "APP" : undefined
     });
     const passenger = this.createUser("Ana Passageira", "ana@movy.local", hashPassword("123456"), "PASSENGER");
     const driverUser = this.createUser("Carlos Motorista", "carlos@movy.local", hashPassword("123456"), "DRIVER");
