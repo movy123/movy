@@ -16,12 +16,7 @@ const sharedEnv = {
   NODE_ENV: process.env.NODE_ENV ?? "production",
   MOVY_DATA_MODE: process.env.MOVY_DATA_MODE ?? "memory",
   JWT_SECRET: process.env.JWT_SECRET ?? "movy-ci-secret",
-  BACKEND_PORT: backendPort,
-  PORT: frontendPort,
-  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? backendUrl,
-  NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL ?? backendUrl,
   EXPO_PUBLIC_API_URL: process.env.EXPO_PUBLIC_API_URL ?? backendUrl,
-  CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS ?? frontendUrl,
   TRUST_PROXY: process.env.TRUST_PROXY ?? "true",
   MOVY_ALLOW_DASHBOARD_FALLBACK: process.env.MOVY_ALLOW_DASHBOARD_FALLBACK ?? "false",
   MOVY_DEMO_ADMIN_EMAIL: process.env.MOVY_DEMO_ADMIN_EMAIL ?? "admin@movy.ci",
@@ -35,27 +30,47 @@ const sharedEnv = {
   HELMET_ENABLED: process.env.HELMET_ENABLED ?? "true",
   LOG_LEVEL: process.env.LOG_LEVEL ?? "warn"
 };
+const backendEnv = {
+  ...sharedEnv,
+  PORT: backendPort,
+  BACKEND_PORT: backendPort,
+  CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS ?? frontendUrl
+};
+const frontendEnv = {
+  ...sharedEnv,
+  PORT: frontendPort,
+  BACKEND_PORT: backendPort,
+  MOVY_BACKEND_BASE_URL: process.env.MOVY_BACKEND_BASE_URL ?? backendUrl,
+  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? backendUrl,
+  NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL ?? backendUrl
+};
 
 const background = [];
 
 try {
   background.push(
-    startProcess("backend", process.execPath, [path.join(repoRoot, "backend", "dist", "index.js")], sharedEnv, repoRoot),
+    startProcess("backend", process.execPath, [path.join(repoRoot, "backend", "dist", "index.js")], backendEnv, repoRoot),
     startProcess(
       "frontend",
       process.execPath,
       [path.join(repoRoot, "node_modules", "next", "dist", "bin", "next"), "start", "--port", frontendPort],
-      sharedEnv,
+      frontendEnv,
       path.join(repoRoot, "frontend")
     )
   );
 
   await waitForJson(`${backendUrl}/api/health`, (payload) => ["ok", "degraded"].includes(payload?.status), "backend health");
-  await waitForJson(`${backendUrl}/api/readiness`, (payload) => ["ready", "degraded"].includes(payload?.status), "backend readiness");
+  await waitForJson(
+    `${backendUrl}/api/readiness`,
+    (payload) => ["ready", "degraded"].includes(payload?.status),
+    "backend readiness",
+    120_000,
+    [200, 503]
+  );
   await waitForJson(`${frontendUrl}/api/health`, (payload) => payload?.status === "ok", "frontend health");
 
   await runCommand("smoke", "node", ["scripts/smoke.mjs", "all"], {
-    ...sharedEnv,
+    ...frontendEnv,
     BACKEND_HEALTH_URL: `${backendUrl}/api/health`,
     BACKEND_READINESS_URL: `${backendUrl}/api/readiness`,
     FRONTEND_HEALTH_URL: `${frontendUrl}/api/health`
@@ -106,7 +121,7 @@ async function runCommand(name, command, args, env) {
   });
 }
 
-async function waitForJson(url, validate, label, timeoutMs = 120_000) {
+async function waitForJson(url, validate, label, timeoutMs = 120_000, acceptableStatuses = [200]) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -118,7 +133,7 @@ async function waitForJson(url, validate, label, timeoutMs = 120_000) {
         }
       });
 
-      if (response.ok) {
+      if (acceptableStatuses.includes(response.status)) {
         const payload = await response.json();
         if (validate(payload)) {
           console.log(`[wait] ${label} ok`);

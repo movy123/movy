@@ -1,4 +1,5 @@
-const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+import { backendUrl } from "../../lib/backend-url";
+
 const driverEmail = process.env.MOVY_DEMO_DRIVER_EMAIL ?? "carlos@movy.local";
 const driverPassword = process.env.MOVY_DEMO_DRIVER_PASSWORD ?? "123456";
 const adminEmail = process.env.MOVY_DEMO_ADMIN_EMAIL ?? "admin@movy.local";

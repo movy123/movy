@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import jwt from "@fastify/jwt";
@@ -92,15 +92,17 @@ export async function buildApp() {
     };
   };
 
-  const readinessHandler = async () => {
+  const readinessHandler = async (_request: unknown, reply: FastifyReply) => {
     const persistence = getPersistenceMeta();
-    return {
+    const payload = {
       status: persistence.mode === "prisma" ? "ready" : "degraded",
       persistence,
       checks: {
         database: persistence.mode === "prisma" ? "connected" : "fallback-memory"
       }
     };
+
+    return reply.code(payload.status === "ready" ? 200 : 503).send(payload);
   };
 
   const metricsHandler = async () => {

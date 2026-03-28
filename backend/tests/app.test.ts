@@ -59,6 +59,13 @@ describe("MOVY backend", () => {
     expect(response.headers["x-content-type-options"]).toBe("nosniff");
   });
 
+  it("returns degraded readiness with 503 while running in memory mode", async () => {
+    const response = await request(app.server).get("/api/v1/readiness");
+    expect(response.status).toBe(503);
+    expect(response.body.status).toBe("degraded");
+    expect(response.body.checks.database).toBe("fallback-memory");
+  });
+
   it("enforces rate limiting while skipping health endpoints", async () => {
     const previousMax = process.env.RATE_LIMIT_MAX;
     const previousWindow = process.env.RATE_LIMIT_WINDOW_MS;

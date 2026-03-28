@@ -59,7 +59,7 @@ export function readAppConfig(): AppConfig {
 
   return {
     env,
-    port: Number(process.env.BACKEND_PORT ?? 3333),
+    port: Number(process.env.PORT ?? process.env.BACKEND_PORT ?? 3333),
     logLevel: process.env.LOG_LEVEL ?? (env === "production" ? "info" : "debug"),
     jwtSecret: process.env.JWT_SECRET ?? "movy-local-secret",
     corsAllowedOrigins: parseAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS),

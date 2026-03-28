@@ -1,4 +1,5 @@
-const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+import { backendUrl } from "../../lib/backend-url";
+
 const passengerEmail = process.env.MOVY_DEMO_PASSENGER_EMAIL ?? "ana@movy.local";
 const passengerPassword = process.env.MOVY_DEMO_PASSENGER_PASSWORD ?? "123456";
 

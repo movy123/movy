@@ -13,6 +13,7 @@ const checksByMode = {
     {
       name: "backend readiness",
       url: process.env.BACKEND_READINESS_URL ?? "http://127.0.0.1:3333/api/readiness",
+      acceptableStatuses: [200, 503],
       validate: (payload) => ["ready", "degraded"].includes(payload?.status) && payload?.checks?.database
     }
   ],
@@ -42,7 +43,8 @@ for (const check of checks) {
     }
   });
 
-  if (!response.ok) {
+  const acceptableStatuses = check.acceptableStatuses ?? [200];
+  if (!acceptableStatuses.includes(response.status)) {
     throw new Error(`${check.name} failed with HTTP ${response.status}`);
   }
 

@@ -3,16 +3,64 @@ import { hashPassword } from "../src/shared/security.js";
 
 const prisma = new PrismaClient();
 
+function readSeedValue(key: string, fallback: string) {
+  const value = process.env[key]?.trim();
+  return value && value.length > 0 ? value : fallback;
+}
+
+async function ensureWallet(userId: string, balance: number) {
+  await prisma.wallet.upsert({
+    where: { userId },
+    update: {},
+    create: {
+      userId,
+      balance
+    }
+  });
+}
+
+async function ensureNotification(userId: string, title: string, message: string, level: "INFO" | "WARNING" | "CRITICAL") {
+  const existing = await prisma.notification.findFirst({
+    where: {
+      userId,
+      title,
+      message,
+      level
+    }
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  return prisma.notification.create({
+    data: {
+      userId,
+      title,
+      message,
+      level,
+      channel: "IN_APP"
+    }
+  });
+}
+
 async function main() {
+  const adminEmail = readSeedValue("MOVY_DEMO_ADMIN_EMAIL", "admin@movy.local");
+  const adminPassword = readSeedValue("MOVY_DEMO_ADMIN_PASSWORD", "admin123");
+  const passengerEmail = readSeedValue("MOVY_DEMO_PASSENGER_EMAIL", "ana@movy.local");
+  const passengerPassword = readSeedValue("MOVY_DEMO_PASSENGER_PASSWORD", "123456");
+  const driverEmail = readSeedValue("MOVY_DEMO_DRIVER_EMAIL", "carlos@movy.local");
+  const driverPassword = readSeedValue("MOVY_DEMO_DRIVER_PASSWORD", "123456");
+
   const admin = await prisma.user.upsert({
-    where: { email: "admin@movy.local" },
+    where: { email: adminEmail },
     update: {
       mfaEnabled: true
     },
     create: {
       name: "Equipe MOVY",
-      email: "admin@movy.local",
-      passwordHash: hashPassword("admin123"),
+      email: adminEmail,
+      passwordHash: hashPassword(adminPassword),
       role: UserRole.ADMIN,
       rating: 5,
       walletBalance: 0,
@@ -24,14 +72,15 @@ async function main() {
       }
     }
   });
+  await ensureWallet(admin.id, 0);
 
   const passenger = await prisma.user.upsert({
-    where: { email: "ana@movy.local" },
+    where: { email: passengerEmail },
     update: {},
     create: {
       name: "Ana Passageira",
-      email: "ana@movy.local",
-      passwordHash: hashPassword("123456"),
+      email: passengerEmail,
+      passwordHash: hashPassword(passengerPassword),
       role: UserRole.PASSENGER,
       rating: 4.8,
       walletBalance: 150,
@@ -42,14 +91,15 @@ async function main() {
       }
     }
   });
+  await ensureWallet(passenger.id, 150);
 
   const carlos = await prisma.user.upsert({
-    where: { email: "carlos@movy.local" },
+    where: { email: driverEmail },
     update: {},
     create: {
       name: "Carlos Motorista",
-      email: "carlos@movy.local",
-      passwordHash: hashPassword("123456"),
+      email: driverEmail,
+      passwordHash: hashPassword(driverPassword),
       role: UserRole.DRIVER,
       rating: 4.8,
       walletBalance: 0,
@@ -60,6 +110,7 @@ async function main() {
       }
     }
   });
+  await ensureWallet(carlos.id, 0);
 
   const fernanda = await prisma.user.upsert({
     where: { email: "fernanda@movy.local" },
@@ -78,6 +129,7 @@ async function main() {
       }
     }
   });
+  await ensureWallet(fernanda.id, 0);
 
   await prisma.driverProfile.upsert({
     where: { userId: carlos.id },
@@ -135,25 +187,8 @@ async function main() {
     }
   });
 
-  await prisma.notification.createMany({
-    data: [
-      {
-        userId: admin.id,
-        title: "Painel ativo",
-        message: "Monitoramento operacional inicializado.",
-        level: "INFO",
-        channel: "IN_APP"
-      },
-      {
-        userId: passenger.id,
-        title: "Bem-vinda a MOVY",
-        message: "Seu perfil esta pronto para solicitar viagens.",
-        level: "INFO",
-        channel: "IN_APP"
-      }
-    ],
-    skipDuplicates: true
-  });
+  await ensureNotification(admin.id, "Painel ativo", "Monitoramento operacional inicializado.", "INFO");
+  await ensureNotification(passenger.id, "Bem-vinda a MOVY", "Seu perfil esta pronto para solicitar viagens.", "INFO");
 }
 
 main()

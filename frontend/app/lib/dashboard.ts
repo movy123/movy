@@ -1,4 +1,5 @@
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+import { backendUrl as apiUrl } from "./backend-url";
+
 const adminEmail = process.env.MOVY_DEMO_ADMIN_EMAIL;
 const adminPassword = process.env.MOVY_DEMO_ADMIN_PASSWORD;
 const fallbackAllowed =
