@@ -1,0 +1,407 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PASSENGER
+  DRIVER
+  ADMIN
+}
+
+enum RideType {
+  INSTANT
+  SCHEDULED
+  SHARED
+}
+
+enum RideStatus {
+  REQUESTED
+  MATCHED
+  ACCEPTED
+  ARRIVING
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  PIX
+  CARD
+  WALLET
+}
+
+enum WalletTransactionKind {
+  CREDIT
+  DEBIT
+}
+
+enum RideEventType {
+  REQUESTED
+  MATCHED
+  ACCEPTED
+  PIN_GENERATED
+  PIN_VERIFIED
+  STARTED
+  SOS_TRIGGERED
+  COMPLETED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  name               String
+  email              String              @unique
+  passwordHash       String
+  role               UserRole
+  rating             Decimal             @default(0) @db.Decimal(3, 2)
+  walletBalance      Decimal             @default(0) @db.Decimal(10, 2)
+  mfaEnabled         Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  driverProfile      DriverProfile?
+  wallet             Wallet?
+  ridesAsClient      Ride[]              @relation("PassengerRides")
+  fareEstimates      FareEstimate[]
+  reviewsGiven       Review[]            @relation("ReviewerReviews")
+  reviewsTaken       Review[]            @relation("ReviewedReviews")
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  supportTickets     SupportTicket[]     @relation("TicketOwner")
+  walletTransactions WalletTransaction[]
+  deviceSessions     DeviceSession[]
+  fraudSignals       FraudSignal[]
+  safetyIncidents    SafetyIncident[]    @relation("IncidentReporter")
+}
+
+model DriverProfile {
+  id                 String             @id @default(uuid())
+  userId             String             @unique
+  businessName       String
+  basePricePerKm     Decimal            @db.Decimal(10, 2)
+  coverageRadiusKm   Decimal            @db.Decimal(10, 2)
+  available          Boolean            @default(true)
+  vehicleType        String
+  serviceTypes       RideType[]
+  currentAddress     String
+  currentLat         Decimal            @db.Decimal(10, 7)
+  currentLng         Decimal            @db.Decimal(10, 7)
+  safetyScore        Int
+  kycStatus          String
+  createdAt          DateTime           @default(now())
+  user               User               @relation(fields: [userId], references: [id])
+  vehicles           Vehicle[]
+  rides              Ride[]             @relation("DriverRides")
+  availability       AvailabilityWindow[]
+  serviceAreas       ServiceArea[]
+}
+
+model Vehicle {
+  id          String        @id @default(uuid())
+  driverId    String
+  make        String
+  model       String
+  color       String
+  plate       String        @unique
+  year        Int
+  verified    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  driver      DriverProfile @relation(fields: [driverId], references: [id])
+}
+
+model AvailabilityWindow {
+  id        String        @id @default(uuid())
+  driverId  String
+  weekday   Int
+  startHour Int
+  endHour   Int
+  createdAt DateTime      @default(now())
+  driver    DriverProfile @relation(fields: [driverId], references: [id])
+}
+
+model ServiceArea {
+  id          String        @id @default(uuid())
+  driverId    String
+  name        String
+  city        String
+  radiusKm    Decimal       @db.Decimal(10, 2)
+  centerLat   Decimal       @db.Decimal(10, 7)
+  centerLng   Decimal       @db.Decimal(10, 7)
+  createdAt   DateTime      @default(now())
+  driver      DriverProfile @relation(fields: [driverId], references: [id])
+}
+
+model Ride {
+  id                 String             @id @default(uuid())
+  passengerId        String
+  driverId           String?
+  originAddress      String
+  originLat          Decimal            @db.Decimal(10, 7)
+  originLng          Decimal            @db.Decimal(10, 7)
+  destinationAddr    String
+  destinationLat     Decimal            @db.Decimal(10, 7)
+  destinationLng     Decimal            @db.Decimal(10, 7)
+  type               RideType
+  status             RideStatus
+  distanceKm         Decimal            @db.Decimal(10, 2)
+  estimatedMinutes   Int
+  suggestedPrice     Decimal            @db.Decimal(10, 2)
+  finalPrice         Decimal?           @db.Decimal(10, 2)
+  scheduledFor       DateTime?
+  sharingCode        String             @unique
+  boardingPin        String
+  boardingPinVerified Boolean           @default(false)
+  sosTriggered       Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  fareEstimate       FareEstimate?
+  passenger          User               @relation("PassengerRides", fields: [passengerId], references: [id])
+  driver             DriverProfile?     @relation("DriverRides", fields: [driverId], references: [id])
+  payments           Payment[]
+  reviews            Review[]
+  rideEvents         RideEvent[]
+  riskScores         RiskScore[]
+  trackingPoints     RideTrackingPoint[]
+
+  @@index([passengerId, createdAt])
+  @@index([driverId, status, createdAt])
+  @@index([status, createdAt])
+}
+
+model FareEstimate {
+  id                  String    @id @default(uuid())
+  passengerId         String
+  originAddress       String
+  originLat           Decimal   @db.Decimal(10, 7)
+  originLng           Decimal   @db.Decimal(10, 7)
+  destinationAddress  String
+  destinationLat      Decimal   @db.Decimal(10, 7)
+  destinationLng      Decimal   @db.Decimal(10, 7)
+  type                RideType
+  scheduledFor        DateTime?
+  distanceKm          Decimal   @db.Decimal(10, 2)
+  estimatedMinutes    Int
+  suggestedPrice      Decimal   @db.Decimal(10, 2)
+  minPrice            Decimal   @db.Decimal(10, 2)
+  maxPrice            Decimal   @db.Decimal(10, 2)
+  riskScore           Decimal   @db.Decimal(5, 2)
+  riskLevel           RiskLevel
+  pinRequired         Boolean   @default(false)
+  expiresAt           DateTime
+  bookedRideId        String?   @unique
+  createdAt           DateTime  @default(now())
+  passenger           User      @relation(fields: [passengerId], references: [id])
+  ride                Ride?     @relation(fields: [bookedRideId], references: [id])
+
+  @@index([passengerId, createdAt])
+  @@index([expiresAt])
+}
+
+model RideTrackingPoint {
+  id         String   @id @default(uuid())
+  rideId      String
+  lat        Decimal  @db.Decimal(10, 7)
+  lng        Decimal  @db.Decimal(10, 7)
+  speedKph   Decimal? @db.Decimal(10, 2)
+  heading    Decimal? @db.Decimal(10, 2)
+  recordedAt DateTime @default(now())
+  ride       Ride     @relation(fields: [rideId], references: [id])
+
+  @@index([rideId, recordedAt])
+}
+
+model RideEvent {
+  id        String        @id @default(uuid())
+  rideId     String
+  type      RideEventType
+  actorId    String?
+  payload   Json?
+  createdAt DateTime      @default(now())
+  ride      Ride          @relation(fields: [rideId], references: [id])
+
+  @@index([rideId, createdAt])
+}
+
+model RiskScore {
+  id        String    @id @default(uuid())
+  rideId     String
+  score     Decimal   @db.Decimal(5, 2)
+  level     RiskLevel
+  reasons   Json
+  createdAt DateTime  @default(now())
+  ride      Ride      @relation(fields: [rideId], references: [id])
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  rideId      String
+  method      PaymentMethod
+  total       Decimal       @db.Decimal(10, 2)
+  platformFee Decimal       @db.Decimal(10, 2)
+  driverNet   Decimal       @db.Decimal(10, 2)
+  status      String
+  createdAt   DateTime      @default(now())
+  ride        Ride          @relation(fields: [rideId], references: [id])
+}
+
+model Wallet {
+  id        String              @id @default(uuid())
+  userId    String              @unique
+  balance   Decimal             @default(0) @db.Decimal(10, 2)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  user      User                @relation(fields: [userId], references: [id])
+  entries   WalletTransaction[]
+}
+
+model WalletTransaction {
+  id          String                @id @default(uuid())
+  userId       String
+  walletId     String
+  rideId       String?
+  kind        WalletTransactionKind
+  amount      Decimal               @db.Decimal(10, 2)
+  description String
+  createdAt   DateTime              @default(now())
+  user        User                  @relation(fields: [userId], references: [id])
+  wallet      Wallet                @relation(fields: [walletId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  rideId      String
+  reviewerId  String
+  reviewedId  String
+  score       Int
+  comment     String
+  createdAt   DateTime @default(now())
+  ride        Ride     @relation(fields: [rideId], references: [id])
+  reviewer    User     @relation("ReviewerReviews", fields: [reviewerId], references: [id])
+  reviewed    User     @relation("ReviewedReviews", fields: [reviewedId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  level     String
+  channel   String   @default("IN_APP")
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model MfaChallenge {
+  id         String   @id @default(uuid())
+  userId     String
+  code       String
+  deviceName String
+  platform   String
+  method     String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model SupportTicket {
+  id          String   @id @default(uuid())
+  ownerId     String
+  rideId      String?
+  category    String
+  status      String
+  summary     String
+  createdAt   DateTime @default(now())
+  owner       User     @relation("TicketOwner", fields: [ownerId], references: [id])
+}
+
+model DeviceSession {
+  id               String   @id @default(uuid())
+  userId           String
+  refreshTokenHash String
+  deviceName       String
+  platform         String
+  lastSeenAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, lastSeenAt])
+}
+
+model FraudSignal {
+  id         String         @id @default(uuid())
+  rideId     String?
+  userId     String?
+  type       String
+  severity   FraudSeverity
+  summary    String
+  metadata   Json?
+  status     String
+  createdAt  DateTime       @default(now())
+  user       User?          @relation(fields: [userId], references: [id])
+
+  @@index([rideId, createdAt])
+  @@index([severity, createdAt])
+}
+
+model SafetyIncident {
+  id         String         @id @default(uuid())
+  rideId     String
+  reporterId String
+  type       String
+  status     IncidentStatus @default(OPEN)
+  summary    String
+  metadata   Json?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  reporter   User           @relation("IncidentReporter", fields: [reporterId], references: [id])
+
+  @@index([rideId, createdAt])
+  @@index([status, updatedAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  entityType String
+  entityId   String
+  action     String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+}
+
+model FeatureFlag {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  enabled    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

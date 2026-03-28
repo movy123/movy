@@ -1,0 +1,170 @@
+name: deploy-staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE_NAME: ${{ github.repository_owner }}/movy-backend
+  FRONTEND_IMAGE_NAME: ${{ github.repository_owner }}/movy-frontend
+  STAGING_DEPLOY_DIR: ${{ secrets.STAGING_APP_DIR }}
+  STAGING_SSH_PORT: ${{ secrets.STAGING_SSH_PORT != '' && secrets.STAGING_SSH_PORT || '22' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate monorepo
+        run: npm run verify
+
+      - name: Audit dependencies
+        run: npm run audit
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        shell: bash
+        run: |
+          backend_image="${REGISTRY,,}/${BACKEND_IMAGE_NAME,,}:staging-${GITHUB_SHA}"
+          frontend_image="${REGISTRY,,}/${FRONTEND_IMAGE_NAME,,}:staging-${GITHUB_SHA}"
+          backend_latest="${REGISTRY,,}/${BACKEND_IMAGE_NAME,,}:staging-latest"
+          frontend_latest="${REGISTRY,,}/${FRONTEND_IMAGE_NAME,,}:staging-latest"
+          echo "backend_image=${backend_image}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${frontend_image}" >> "$GITHUB_OUTPUT"
+          echo "backend_latest=${backend_latest}" >> "$GITHUB_OUTPUT"
+          echo "frontend_latest=${frontend_latest}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        run: |
+          docker build -f backend/Dockerfile -t "${{ steps.meta.outputs.backend_image }}" -t "${{ steps.meta.outputs.backend_latest }}" .
+          docker push "${{ steps.meta.outputs.backend_image }}"
+          docker push "${{ steps.meta.outputs.backend_latest }}"
+
+      - name: Build and push frontend image
+        run: |
+          docker build -f frontend/Dockerfile -t "${{ steps.meta.outputs.frontend_image }}" -t "${{ steps.meta.outputs.frontend_latest }}" .
+          docker push "${{ steps.meta.outputs.frontend_image }}"
+          docker push "${{ steps.meta.outputs.frontend_latest }}"
+
+      - name: Prepare staging env bundle
+        shell: bash
+        run: |
+          cat > .env.staging <<EOF
+          BACKEND_IMAGE=${{ steps.meta.outputs.backend_image }}
+          FRONTEND_IMAGE=${{ steps.meta.outputs.frontend_image }}
+          NODE_ENV=production
+          BACKEND_PORT=3333
+          JWT_SECRET=${{ secrets.STAGING_JWT_SECRET }}
+          MOVY_DATA_MODE=prisma
+          DATABASE_URL=postgresql://${{ secrets.STAGING_POSTGRES_USER }}:${{ secrets.STAGING_POSTGRES_PASSWORD }}@postgres:5432/${{ secrets.STAGING_POSTGRES_DB }}
+          REDIS_URL=redis://redis:6379
+          CORS_ALLOWED_ORIGINS=${{ secrets.STAGING_CORS_ALLOWED_ORIGINS }}
+          LOG_LEVEL=info
+          TRUST_PROXY=true
+          RATE_LIMIT_MAX=120
+          RATE_LIMIT_WINDOW_MS=60000
+          HELMET_ENABLED=true
+          EXPO_PUBLIC_API_URL=${{ secrets.STAGING_PUBLIC_API_URL }}
+          MOVY_DEMO_ADMIN_EMAIL=${{ secrets.STAGING_ADMIN_EMAIL }}
+          MOVY_DEMO_ADMIN_PASSWORD=${{ secrets.STAGING_ADMIN_PASSWORD }}
+          MOVY_ALLOW_DASHBOARD_FALLBACK=false
+          MOVY_DEMO_PASSENGER_EMAIL=${{ secrets.STAGING_PASSENGER_EMAIL }}
+          MOVY_DEMO_PASSENGER_PASSWORD=${{ secrets.STAGING_PASSENGER_PASSWORD }}
+          MOVY_DEMO_DRIVER_EMAIL=${{ secrets.STAGING_DRIVER_EMAIL }}
+          MOVY_DEMO_DRIVER_PASSWORD=${{ secrets.STAGING_DRIVER_PASSWORD }}
+          STAGING_POSTGRES_DB=${{ secrets.STAGING_POSTGRES_DB }}
+          STAGING_POSTGRES_USER=${{ secrets.STAGING_POSTGRES_USER }}
+          STAGING_POSTGRES_PASSWORD=${{ secrets.STAGING_POSTGRES_PASSWORD }}
+          STAGING_PUBLIC_API_URL=${{ secrets.STAGING_PUBLIC_API_URL }}
+          STAGING_PUBLIC_WS_URL=${{ secrets.STAGING_PUBLIC_WS_URL }}
+          EOF
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' '${{ secrets.STAGING_SSH_PRIVATE_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${STAGING_SSH_PORT}" "${{ secrets.STAGING_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload staging bundle
+        shell: bash
+        run: |
+          ssh -p "${STAGING_SSH_PORT}" "${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }}" "mkdir -p '${STAGING_DEPLOY_DIR}/infra' '${STAGING_DEPLOY_DIR}/releases'"
+          scp -P "${STAGING_SSH_PORT}" infra/docker-compose.staging.yml "${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }}:${STAGING_DEPLOY_DIR}/infra/docker-compose.staging.yml"
+          scp -P "${STAGING_SSH_PORT}" .env.staging "${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }}:${STAGING_DEPLOY_DIR}/.env.staging.next"
+
+      - name: Deploy to staging host with rollback snapshot
+        shell: bash
+        run: |
+          ssh -p "${STAGING_SSH_PORT}" "${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }}" "
+            set -euo pipefail
+            cd '${STAGING_DEPLOY_DIR}'
+            timestamp=\$(date +%Y%m%d%H%M%S)
+            if [ -f .env.staging ]; then cp .env.staging releases/.env.staging.\${timestamp}.bak; fi
+            mv .env.staging.next .env.staging
+            echo '${{ secrets.STAGING_REGISTRY_TOKEN }}' | docker login '${{ env.REGISTRY }}' -u '${{ secrets.STAGING_REGISTRY_USER }}' --password-stdin
+            docker compose --env-file .env.staging -f infra/docker-compose.staging.yml pull
+            docker compose --env-file .env.staging -f infra/docker-compose.staging.yml up -d --remove-orphans
+          "
+
+      - name: Wait for services to settle
+        run: sleep 25
+
+      - name: Run post-release smoke tests
+        env:
+          SMOKE_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+          SMOKE_API_URL: ${{ secrets.STAGING_PUBLIC_API_URL }}
+          SMOKE_PASSENGER_EMAIL: ${{ secrets.STAGING_PASSENGER_EMAIL }}
+          SMOKE_PASSENGER_PASSWORD: ${{ secrets.STAGING_PASSENGER_PASSWORD }}
+        run: npm run smoke:staging
+
+      - name: Capture rollback instructions
+        if: always()
+        shell: bash
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Staging deploy
+          - Backend image: \`${{ steps.meta.outputs.backend_image }}\`
+          - Frontend image: \`${{ steps.meta.outputs.frontend_image }}\`
+          - Remote dir: \`${{ env.STAGING_DEPLOY_DIR }}\`
+
+          Rollback on host:
+          \`\`\`bash
+          cd ${STAGING_DEPLOY_DIR}
+          ls -1 releases/.env.staging.*.bak | tail -n 1
+          cp releases/.env.staging.<timestamp>.bak .env.staging
+          docker compose --env-file .env.staging -f infra/docker-compose.staging.yml up -d --remove-orphans
+          \`\`\`
+          EOF

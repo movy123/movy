@@ -1,0 +1,257 @@
+name: deploy-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Executar deploy normal ou rollback assistido"
+        required: true
+        type: choice
+        options:
+          - deploy
+          - rollback
+        default: deploy
+      release_ref:
+        description: "Git ref a promover em modo deploy"
+        required: false
+        type: string
+        default: main
+      rollback_backup:
+        description: "Arquivo .env.production backup a restaurar em modo rollback; vazio usa o mais recente"
+        required: false
+        type: string
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE_NAME: ${{ github.repository_owner }}/movy-backend
+  FRONTEND_IMAGE_NAME: ${{ github.repository_owner }}/movy-frontend
+  PRODUCTION_DEPLOY_DIR: ${{ secrets.PRODUCTION_APP_DIR }}
+  PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT != '' && secrets.PRODUCTION_SSH_PORT || '22' }}
+
+jobs:
+  deploy:
+    if: ${{ inputs.action == 'deploy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release candidate
+        run: npm run verify
+
+      - name: Audit dependencies
+        run: npm run audit
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute production image tags
+        id: meta
+        shell: bash
+        run: |
+          release_sha="$(git rev-parse HEAD)"
+          backend_image="${REGISTRY,,}/${BACKEND_IMAGE_NAME,,}:production-${release_sha}"
+          frontend_image="${REGISTRY,,}/${FRONTEND_IMAGE_NAME,,}:production-${release_sha}"
+          backend_latest="${REGISTRY,,}/${BACKEND_IMAGE_NAME,,}:production-latest"
+          frontend_latest="${REGISTRY,,}/${FRONTEND_IMAGE_NAME,,}:production-latest"
+          echo "release_sha=${release_sha}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=${backend_image}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${frontend_image}" >> "$GITHUB_OUTPUT"
+          echo "backend_latest=${backend_latest}" >> "$GITHUB_OUTPUT"
+          echo "frontend_latest=${frontend_latest}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        run: |
+          docker build -f backend/Dockerfile -t "${{ steps.meta.outputs.backend_image }}" -t "${{ steps.meta.outputs.backend_latest }}" .
+          docker push "${{ steps.meta.outputs.backend_image }}"
+          docker push "${{ steps.meta.outputs.backend_latest }}"
+
+      - name: Build and push frontend image
+        run: |
+          docker build -f frontend/Dockerfile -t "${{ steps.meta.outputs.frontend_image }}" -t "${{ steps.meta.outputs.frontend_latest }}" .
+          docker push "${{ steps.meta.outputs.frontend_image }}"
+          docker push "${{ steps.meta.outputs.frontend_latest }}"
+
+      - name: Prepare production env bundle
+        shell: bash
+        run: |
+          cat > .env.production <<EOF
+          BACKEND_IMAGE=${{ steps.meta.outputs.backend_image }}
+          FRONTEND_IMAGE=${{ steps.meta.outputs.frontend_image }}
+          NODE_ENV=production
+          BACKEND_PORT=3333
+          JWT_SECRET=${{ secrets.PRODUCTION_JWT_SECRET }}
+          MOVY_DATA_MODE=prisma
+          DATABASE_URL=postgresql://${{ secrets.PRODUCTION_POSTGRES_USER }}:${{ secrets.PRODUCTION_POSTGRES_PASSWORD }}@postgres:5432/${{ secrets.PRODUCTION_POSTGRES_DB }}
+          REDIS_URL=redis://redis:6379
+          CORS_ALLOWED_ORIGINS=${{ secrets.PRODUCTION_CORS_ALLOWED_ORIGINS }}
+          LOG_LEVEL=info
+          TRUST_PROXY=true
+          RATE_LIMIT_MAX=120
+          RATE_LIMIT_WINDOW_MS=60000
+          HELMET_ENABLED=true
+          EXPO_PUBLIC_API_URL=${{ secrets.PRODUCTION_PUBLIC_API_URL }}
+          MOVY_DEMO_ADMIN_EMAIL=${{ secrets.PRODUCTION_ADMIN_EMAIL }}
+          MOVY_DEMO_ADMIN_PASSWORD=${{ secrets.PRODUCTION_ADMIN_PASSWORD }}
+          MOVY_ALLOW_DASHBOARD_FALLBACK=false
+          MOVY_DEMO_PASSENGER_EMAIL=${{ secrets.PRODUCTION_PASSENGER_EMAIL }}
+          MOVY_DEMO_PASSENGER_PASSWORD=${{ secrets.PRODUCTION_PASSENGER_PASSWORD }}
+          MOVY_DEMO_DRIVER_EMAIL=${{ secrets.PRODUCTION_DRIVER_EMAIL }}
+          MOVY_DEMO_DRIVER_PASSWORD=${{ secrets.PRODUCTION_DRIVER_PASSWORD }}
+          PRODUCTION_POSTGRES_DB=${{ secrets.PRODUCTION_POSTGRES_DB }}
+          PRODUCTION_POSTGRES_USER=${{ secrets.PRODUCTION_POSTGRES_USER }}
+          PRODUCTION_POSTGRES_PASSWORD=${{ secrets.PRODUCTION_POSTGRES_PASSWORD }}
+          PRODUCTION_PUBLIC_API_URL=${{ secrets.PRODUCTION_PUBLIC_API_URL }}
+          PRODUCTION_PUBLIC_WS_URL=${{ secrets.PRODUCTION_PUBLIC_WS_URL }}
+          EOF
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' '${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${PRODUCTION_SSH_PORT}" "${{ secrets.PRODUCTION_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload production bundle
+        shell: bash
+        run: |
+          ssh -p "${PRODUCTION_SSH_PORT}" "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" "mkdir -p '${PRODUCTION_DEPLOY_DIR}/infra' '${PRODUCTION_DEPLOY_DIR}/releases'"
+          scp -P "${PRODUCTION_SSH_PORT}" infra/docker-compose.production.yml "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}:${PRODUCTION_DEPLOY_DIR}/infra/docker-compose.production.yml"
+          scp -P "${PRODUCTION_SSH_PORT}" .env.production "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}:${PRODUCTION_DEPLOY_DIR}/.env.production.next"
+
+      - name: Deploy to production host with rollback snapshot
+        shell: bash
+        run: |
+          ssh -p "${PRODUCTION_SSH_PORT}" "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" "
+            set -euo pipefail
+            cd '${PRODUCTION_DEPLOY_DIR}'
+            timestamp=\$(date +%Y%m%d%H%M%S)
+            if [ -f .env.production ]; then cp .env.production releases/.env.production.\${timestamp}.bak; fi
+            mv .env.production.next .env.production
+            echo '${{ secrets.PRODUCTION_REGISTRY_TOKEN }}' | docker login '${{ env.REGISTRY }}' -u '${{ secrets.PRODUCTION_REGISTRY_USER }}' --password-stdin
+            docker compose --env-file .env.production -f infra/docker-compose.production.yml pull
+            docker compose --env-file .env.production -f infra/docker-compose.production.yml up -d --remove-orphans
+          "
+
+      - name: Wait for services to settle
+        run: sleep 30
+
+      - name: Run post-release production smoke tests
+        env:
+          SMOKE_ENV_NAME: production
+          SMOKE_FRONTEND_URL: ${{ secrets.PRODUCTION_FRONTEND_URL }}
+          SMOKE_API_URL: ${{ secrets.PRODUCTION_PUBLIC_API_URL }}
+          SMOKE_PASSENGER_EMAIL: ${{ secrets.PRODUCTION_PASSENGER_EMAIL }}
+          SMOKE_PASSENGER_PASSWORD: ${{ secrets.PRODUCTION_PASSENGER_PASSWORD }}
+        run: npm run smoke:release
+
+      - name: Capture deployment and rollback summary
+        if: always()
+        shell: bash
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Production deploy
+          - Release SHA: \`${{ steps.meta.outputs.release_sha }}\`
+          - Backend image: \`${{ steps.meta.outputs.backend_image }}\`
+          - Frontend image: \`${{ steps.meta.outputs.frontend_image }}\`
+          - Remote dir: \`${{ env.PRODUCTION_DEPLOY_DIR }}\`
+
+          Rollback on host:
+          \`\`\`bash
+          cd ${PRODUCTION_DEPLOY_DIR}
+          ls -1 releases/.env.production.*.bak | tail -n 1
+          cp releases/.env.production.<timestamp>.bak .env.production
+          docker compose --env-file .env.production -f infra/docker-compose.production.yml up -d --remove-orphans
+          \`\`\`
+          EOF
+
+  rollback:
+    if: ${{ inputs.action == 'rollback' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' '${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${PRODUCTION_SSH_PORT}" "${{ secrets.PRODUCTION_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload production compose file
+        shell: bash
+        run: |
+          ssh -p "${PRODUCTION_SSH_PORT}" "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" "mkdir -p '${PRODUCTION_DEPLOY_DIR}/infra'"
+          scp -P "${PRODUCTION_SSH_PORT}" infra/docker-compose.production.yml "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}:${PRODUCTION_DEPLOY_DIR}/infra/docker-compose.production.yml"
+
+      - name: Roll back production on host
+        shell: bash
+        run: |
+          ssh -p "${PRODUCTION_SSH_PORT}" "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" "
+            set -euo pipefail
+            cd '${PRODUCTION_DEPLOY_DIR}'
+            backup_file='${{ inputs.rollback_backup }}'
+            if [ -z \"\${backup_file}\" ]; then
+              backup_file=\$(ls -1 releases/.env.production.*.bak | tail -n 1)
+            else
+              backup_file=\"releases/\${backup_file}\"
+            fi
+            test -f \"\${backup_file}\"
+            cp \"\${backup_file}\" .env.production
+            docker compose --env-file .env.production -f infra/docker-compose.production.yml up -d --remove-orphans
+          "
+
+      - name: Wait for services to settle
+        run: sleep 30
+
+      - name: Run rollback smoke tests
+        env:
+          SMOKE_ENV_NAME: production-rollback
+          SMOKE_FRONTEND_URL: ${{ secrets.PRODUCTION_FRONTEND_URL }}
+          SMOKE_API_URL: ${{ secrets.PRODUCTION_PUBLIC_API_URL }}
+          SMOKE_PASSENGER_EMAIL: ${{ secrets.PRODUCTION_PASSENGER_EMAIL }}
+          SMOKE_PASSENGER_PASSWORD: ${{ secrets.PRODUCTION_PASSENGER_PASSWORD }}
+        run: npm run smoke:release
+
+      - name: Capture rollback summary
+        if: always()
+        shell: bash
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Production rollback
+          - Remote dir: \`${{ env.PRODUCTION_DEPLOY_DIR }}\`
+          - Requested backup: \`${{ inputs.rollback_backup || 'latest' }}\`
+          EOF

@@ -1,0 +1,31 @@
+{
+  "name": "movy-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "mobile"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:mobile": "npm run dev --workspace mobile",
+    "doctor:windows": "powershell -ExecutionPolicy Bypass -File scripts/doctor.ps1",
+    "start:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "build": "npm run build --workspace backend && npm run build --workspace frontend && npm run build --workspace mobile",
+    "test": "npm run test --workspace backend",
+    "lint": "npm run lint --workspace backend && npm run lint --workspace frontend && npm run lint --workspace mobile",
+    "audit": "npm audit --audit-level=high",
+    "infra:local:up": "docker compose -f infra/docker-compose.local.yml up -d",
+    "infra:local:up:app": "docker compose --profile app -f infra/docker-compose.local.yml up -d",
+    "infra:local:down": "docker compose -f infra/docker-compose.local.yml down",
+    "prisma:bootstrap:local": "npm run prisma:generate --workspace backend && npm run prisma:push --workspace backend && npm run prisma:seed --workspace backend",
+    "smoke:backend": "node scripts/smoke.mjs backend",
+    "smoke:frontend": "node scripts/smoke.mjs frontend",
+    "smoke": "node scripts/smoke.mjs all",
+    "smoke:staging": "node scripts/smoke-staging.mjs",
+    "smoke:release": "node scripts/smoke-staging.mjs",
+    "verify": "npm run lint && npm test && npm run build"
+  }
+}

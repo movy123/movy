@@ -1,0 +1,15 @@
+.git
+.github
+docs
+infra
+mobile
+node_modules
+backend/node_modules
+frontend/node_modules
+backend/dist
+frontend/.next
+coverage
+npm-debug.log
+.env
+.env.*
+!.env.example
