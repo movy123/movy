@@ -3,6 +3,8 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY frontend/package.json frontend/package.json
+COPY backend/package.json backend/package.json
+COPY mobile/package.json mobile/package.json
 RUN npm ci --workspace frontend --include-workspace-root=false
 
 FROM node:24-bookworm-slim AS build
@@ -12,6 +14,8 @@ ENV MOVY_FRONTEND_STANDALONE=true
 COPY package.json package-lock.json ./
 COPY tsconfig.base.json ./
 COPY frontend/package.json frontend/package.json
+COPY backend/package.json backend/package.json
+COPY mobile/package.json mobile/package.json
 COPY frontend/tsconfig.json frontend/tsconfig.json
 COPY frontend/next.config.ts frontend/next.config.ts
 COPY frontend/next-env.d.ts frontend/next-env.d.ts
